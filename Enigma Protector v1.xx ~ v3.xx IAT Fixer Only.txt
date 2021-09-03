@@ -1,0 +1,50 @@
+// Enigma Protector v1.xx till 3.xx IAT Fixer
+
+// by bianfeng
+
+    
+   VAR Temp
+   VAR Var1
+   VAR Var2
+   VAR Var3
+  VAR Var4
+  VAR IAT
+
+   
+
+
+  Lab4:  
+  ASK "IAT:"
+  MOV IAT,$RESULT
+  
+
+  //IAT
+ Lab5:
+ //PAUSE
+ MOV Temp,[IAT],4
+ CMP [Temp],68,1
+ JNE C
+ CMP [Temp+5],3481,2
+ JNE  B
+ MOV Var1,[Temp+1],4
+ MOV Var2,[Temp+8],4
+ XOR Var1,Var2
+ MOV [IAT],Var1
+ JMP C
+ B:
+ CMP [Temp+5],c3,1
+ JNE C
+ MOV Temp,[Temp+1],4
+ MOV [IAT],Temp,4
+ C:
+ ADD IAT,4
+ CMP [IAT],0
+ JNE Lab5
+ ADD IAT,4
+ CMP [IAT],0
+ JNE Lab5
+jnz  Lab5
+ 
+
+ End:
+ ret

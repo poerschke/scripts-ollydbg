@@ -1,0 +1,276 @@
+/* 
+================================================================ 
+ Enigma protector 1.10/1.11 - UNPACKING SCRIPT v1.1 (c)haggar 
+================================================================ 
+
+Script can do: 
+
+- Find OEP, 
+- find stolen OEP code, 
+- fix redirected imports, 
+- fix obfuscated imports, 
+- fix emulated system imports, 
+- detect help to fix relocated code on the fly, 
+
+Script can't: 
+
+- find and fix spliced code (runtime encryption), 
+- find and fix Enigma APIs. 
+
+In that case you need manually do some work, but this script 
+does 99% of job. Tested on full protected target. 
+
+=============================================================== 
+*/ 
+
+
+var loader_base 
+var crc_trap 
+var temp 
+var temp2 
+
+var stolen_code 
+
+var obfuscation 
+var redirection 
+var emulation 
+mov obfuscation,0 
+mov redirection,0 
+mov emulation,0 
+
+var section_base 
+var section_size 
+var addr 
+var relocation 
+mov relocation,0 
+
+msg "Ignore ALL exceptions and delete ALL breakpoints before start!!!" 
+dbh 
+
+//--------------------------- Exctracting Enigma's loader --------------------------- 
+
+gpa "VirtualAlloc","kernel32.dll" 
+bp  $RESULT 
+esto 
+esto 
+bc  eip 
+rtr 
+mov loader_base,eax                 //Retrive base of loader. 
+
+gpa "VirtualFree","kernel32.dll"    //When breaking on VirtualFree, loader is unpacked. 
+bp  $RESULT 
+esto 
+bc  eip 
+
+//----------- Find all important points in loader and place breakpoints on them ----------- 
+
+find loader_base,#8B550C8B7D0885D2762183C8FF8BDA4B85DB72124333F68D143E8A1292E8BCFFFFFF464B75F183F0FFEB0233#
+cmp  $RESULT,0 
+je   error 
+mov  crc_trap,$RESULT     //Find integrity checksum algo. 
+cmt  crc_trap,"<-- Integrity Check!" 
+bp   crc_trap 
+
+find loader_base,#7427A1????????80B83A0300000074198D04FF8B15????????8B0E8B0C8D????????894C020183C604# 
+cmp  $RESULT,0 
+je   error 
+mov  emulation,$RESULT 
+add  emulation,22         //Find import emulation. 
+cmt  emulation,"<-- Import Emulation!" 
+
+find loader_base,#80B838030000007405E8????FFFFA1????????80B839030000007407E8????FFFFEB05E8??????FF# 
+cmp  $RESULT,0 
+je   error 
+mov  obfuscation,$RESULT  //Find import obfuscation. 
+cmt  obfuscation,"<-- Import Obfuscation!" 
+
+find loader_base,#0110EB368B0D????????8B098B35????????2B0E8B15????????8B92ED0000002BCA8B35????????8B3625# 
+cmp  $RESULT,0 
+je   error 
+mov  relocation,$RESULT   //Find relocation of data section. 
+cmt  relocation,"<-- Code Relocation!" 
+
+esto                     //Run 4 times to pass checksum. 
+esto 
+esto 
+esto 
+find eip,#C208008BC0#    //On 4-th break, stop at the end of checksum procedure. 
+cmp  $RESULT,0 
+je   error 
+bphws $RESULT,"x" 
+esto 
+bphwc $RESULT 
+bp   emulation           //Then place breakpoints on important parts. 
+bp   obfuscation 
+bp   relocation 
+
+//---------------------- Now, go detecting protection , fix what you can ------------------------ 
+esto 
+cmp eip,emulation        //Are we at emulation code? 
+jne LABEL01              //If not, then go to next label. If yes, fix emulations. 
+
+bc  eip 
+msg "[1] API Emulation detected! It will be fixed." 
+mov [eip],#90909090#     //NOP emulation (prevents emulation of imports). 
+esto 
+
+LABEL01: 
+bc  emulation 
+mov [emulation],#894C0201#   //Restore NOP-ed bytes at emulation. 
+mov temp,eax                 //Get Enigma check-flags for API obfuscation. 
+add temp,338 
+mov stolen_code,temp         //For later. 
+mov temp,[temp] 
+and temp,0ff 
+cmp temp,0                   //Do we have obfuscation Flag=0 -> NO. 
+bc eip 
+sti 
+sti 
+je LABEL02                   //If not, go to next check. If yes, fix it! 
+
+msg "[2] API Obfuscation detected! It will be fixed." 
+add eip,5                    //Fixing it by just passing call to that procedure. 
+LABEL02: 
+
+sti 
+mov temp,eax                //Get Enigma check-flags for API redirection. 
+add temp,339 
+mov temp,[temp] 
+and temp,0ff 
+cmp temp,0 
+je LABEL03                  //Check redirection. 
+
+msg "[3] Target has API redirection. This will take some time to fix." 
+sti 
+sti 
+sti 
+mov redirection,eip 
+add redirection,5e 
+bp  redirection 
+LABEL04: 
+esto 
+cmp eip,redirection 
+jne LABEL05 
+mov temp,[edi] 
+sti 
+mov [edi],temp 
+mov [temp],[ecx] 
+jmp LABEL04 
+LABEL05: 
+bc redirection 
+
+LABEL03: 
+cmp eip,relocation 
+je LABEL06 
+esto 
+cmp eip,relocation 
+je LABEL06 
+bc relocation 
+jmp LABEL07 
+
+LABEL06: 
+//-------------------------------- Fixing relocated code --------------------------------- 
+bc relocation 
+mov relocation,eip 
+msg "[4] Code Relocation detected (relocated DATA section)! Script is paused, check log for instructions." 
+
+mov temp,[eax] 
+mov addr,edx 
+add addr,temp 
+
+gmemi temp,MEMORYBASE 
+mov   section_base,$RESULT 
+gmemi temp,MEMORYSIZE 
+mov   section_size,$RESULT 
+
+sub temp,section_base 
+sub addr,temp 
+
+log " " 
+log "!SCRIPT INSTRUCTIONS!" 
+log " " 
+log "One section in target is relocated to virtual address. You need to" 
+log "binary copy-paste it to original place. Go in dump to next address" 
+log " " 
+log addr 
+log " " 
+log "and binary copy next amounth of bytes from there" 
+log " " 
+log section_size 
+log " " 
+log "Binary paste that data at next address" 
+log " " 
+log section_base 
+log " " 
+log "When you do that, just resume this script." 
+log " " 
+
+asm eip,"NOP" 
+sti 
+asm eip,"NOP" 
+
+pause 
+esto 
+mov [relocation],#0110EB36# 
+
+LABEL07: 
+
+//--------------------- OEP and/or Stolen Code ---------------------- 
+esto 
+find eip,#C208008BC0#    //On 4-th break, stop at the end of checksum procedure. 
+cmp  $RESULT,0 
+je   error 
+bphws $RESULT,"x" 
+esto 
+bphwc $RESULT 
+
+sti 
+rtr 
+sti 
+rtr 
+sti 
+
+add stolen_code,4 
+mov stolen_code,[stolen_code] 
+and stolen_code,0ff 
+cmp stolen_code,0 
+je LABEL08 
+
+mov stolen_code,eip 
+cmt eip,"<--- Start of stolen code!" 
+msg "[5] This target has Stolen OEP Code. You need fix it by binary copy-paste." 
+find eip,#68????????6031C0B9????????BF????????F2AA47ABAB61C3# 
+cmp $RESULT,0 
+je  error 
+add $RESULT,5 
+mov [$RESULT],#90909090909090909090909090909090909090# 
+add $RESULT,13 
+cmt $RESULT,"<--- End of stolen code! Press F7 to land on 'false OEP'." 
+bp  $RESULT 
+esto 
+
+LABEL08: 
+an eip 
+
+//---------------- Logging information --------------- 
+log " " 
+log " ENIGMA PROTECTOR 1.10 - SCRIPT INFO  (c)haggar" 
+log " " 
+log loader_base 
+log crc_trap 
+log " " 
+log "Import protection:" 
+log obfuscation 
+log redirection 
+log emulation 
+log " " 
+log stolen_code 
+log relocation 
+log " " 
+
+dbs 
+ret 
+error: 
+msg "Some error occurred. Exiting..." 
+dbs 
+ret 
